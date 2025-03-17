@@ -4,66 +4,23 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <pthread.h>
-#include <openssl/evp.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
 
-// Fixed key and IV (same for both encryption and decryption)
-unsigned char key[32] = "This is a key123This is a key123"; // 32 bytes
-unsigned char iv[16]  = "1234567890123456";                  // 16 bytes
+// XOR Encryption function (same for encryption and decryption)
+void xor_encrypt_decrypt(char *input, char *key, char *output) {
+    int i;
+    int key_len = strlen(key);
+    for (i = 0; i < strlen(input); i++) {
+        output[i] = input[i] ^ key[i % key_len];  // XOR each byte with the key
+    }
+    output[i] = '\0';  // Null-terminate the output string
+}
 
 void handleErrors(void) {
     fprintf(stderr, "An error occurred.\n");
     exit(EXIT_FAILURE);
-}
-
-int encrypt(unsigned char *plaintext, int plaintext_len, unsigned char *key,
-            unsigned char *iv, unsigned char *ciphertext) {
-    EVP_CIPHER_CTX *ctx;
-    int len, ciphertext_len;
-
-    if (!(ctx = EVP_CIPHER_CTX_new()))
-        handleErrors();
-
-    if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv))
-        handleErrors();
-
-    if (1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len))
-        handleErrors();
-    ciphertext_len = len;
-
-    if (1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len))
-        handleErrors();
-    ciphertext_len += len;
-
-    EVP_CIPHER_CTX_free(ctx);
-    return ciphertext_len;
-}
-
-int decrypt(unsigned char *ciphertext, int ciphertext_len, unsigned char *key,
-            unsigned char *iv, unsigned char *plaintext) {
-    EVP_CIPHER_CTX *ctx;
-    int len, plaintext_len;
-
-    if (!(ctx = EVP_CIPHER_CTX_new()))
-        handleErrors();
-
-    if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv))
-        handleErrors();
-
-    if (1 != EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len))
-        handleErrors();
-    plaintext_len = len;
-
-    if (1 != EVP_DecryptFinal_ex(ctx, plaintext + len, &len))
-        handleErrors();
-    plaintext_len += len;
-
-    EVP_CIPHER_CTX_free(ctx);
-    return plaintext_len;
 }
 
 void *client_handler(void *socket_desc) {
@@ -75,17 +32,17 @@ void *client_handler(void *socket_desc) {
     // Receive encrypted data from client
     if ((read_size = recv(sock, buffer, BUFFER_SIZE, 0)) > 0) {
         unsigned char decrypted_text[BUFFER_SIZE];
-        int decrypted_len = decrypt(buffer, read_size, key, iv, decrypted_text);
-        decrypted_text[decrypted_len] = '\0';
+        char key[] = "mysecretkey";  // Example XOR key
+        xor_encrypt_decrypt((char *)buffer, key, (char *)decrypted_text);
         printf("Received (decrypted): %s\n", decrypted_text);
 
         // Prepare acknowledgment message
         char ack[] = "Message received";
         unsigned char encrypted_ack[BUFFER_SIZE];
-        int ack_len = encrypt((unsigned char *)ack, strlen(ack), key, iv, encrypted_ack);
+        xor_encrypt_decrypt(ack, key, (char *)encrypted_ack);
 
         // Send encrypted acknowledgment to client
-        send(sock, encrypted_ack, ack_len, 0);
+        send(sock, encrypted_ack, strlen((char *)encrypted_ack), 0);
     }
     close(sock);
     pthread_exit(NULL);
@@ -95,9 +52,6 @@ int main() {
     int server_fd, new_socket, *new_sock;
     struct sockaddr_in server, client;
     socklen_t client_len = sizeof(struct sockaddr_in);
-
-    // Initialize OpenSSL algorithms
-    OpenSSL_add_all_algorithms();
 
     // Create socket
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
@@ -149,4 +103,3 @@ int main() {
     close(server_fd);
     return 0;
 }
-
